@@ -1,0 +1,249 @@
+
+<!DOCTYPE PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<title>JavaCodePoint</title>
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css">
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<style>
+.action-icon{padding:5px;cursor:pointer;color:#fff}
+.table{font-size:11px;}
+.table>tbody>tr>td{padding: 2px 6px;vertical-align: middle;border:none;}
+#main-container{padding: 0px 20px 40px; width: 50%;margin:auto;}
+#upload-status-container{display:none;}
+/* #upload-header{height:35px;width:100%;background-color: #323254;color: #fff;padding: 8px;border-top-left-radius: 10px;border-top-right-radius: 10px;} */
+#progress-bar-container{padding:20px;max-height:260px;overflow-y:auto;border:1px solid #323254;}
+::-webkit-scrollbar {background-color: #fff; width: 8px; height: 8px;}
+::-webkit-scrollbar-thumb {background-color: #C0C0C0; border-radius: 10px;}
+
+.clear {
+	clear: both;
+}
+.wrap>.fileBox {
+	padding: 20px;
+}
+.fileBox input, textarea {
+	width: 100%;
+}
+.fileBox textarea {
+	resize: none;
+}
+.fileBox .fileDrop {
+	display: inline-block;
+	width: 700px;
+	height: 75px;
+	border: 1px solid #000;
+	overflow: auto;
+}
+.fileDrop .fileList .fileName {
+	padding-left: 20px;
+}
+.fileDrop .fileList .fileSize {
+	padding-right: 20px;
+	float: right;
+}
+
+
+</style>
+
+
+</head>
+<body>
+	<div id="main-container">
+		<h3 class="text-info">하둡 대용량 파일 업로드</h3>
+		<span>최대 파일사이즈 500mb  10개 파일  (ec2 서버 환경으로 하둡 권장 최소사양) </span>
+		<hr>
+		<div style="margin-bottom: 20px">
+			<input type="file" id="files" multiple style="margin-bottom: 20px" />
+			<button class="btn btn-primary" type="button" onclick="startUploading()" ><i class="fa fa-upload"></i> Upload file</button>
+		</div>
+		<div id="upload-status-container">
+			<div id="upload-header">
+				<span id="upload-header-text"></span>
+				<i class="action-icon fa fa-window-minimize pull-right" onclick="showHide(this)" title="minimize"></i>
+			</div>
+			<div id="progress-bar-container">
+				<table class="table">
+					<tbody></tbody>
+				</table>
+			</div>
+		</div>
+
+        <iframe src="http://15.164.50.2:50070/explorer.html#/"></iframe>
+		<button class="btn btn-primary" type="button" onclick="downloadFile()" ><i class="fa fa-upload"></i> Download file</button>
+		<button class="btn btn-primary" type="button" onclick="mkdir()" ><i class="fa fa-upload"></i> mkdir</button>
+	</div>
+</body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.19.0/axios.min.js"></script>
+<script>
+
+	function downloadFile() {
+		console.log("downloadFile")
+		axios({
+			method: 'POST', //통신 방식
+			url: '/download', //통신할 페이지
+			data: {
+				fileNm : '/20230105.txt',
+				fileOrig: '/'
+			}
+		}).then(resData=>{
+			
+			windows.open(resData.data);
+		}).catch(error => {  // catch() : 요청 실패시 자동으로 실행되는 함수
+            console.log(error);
+        });
+		
+	}
+
+    /* Globle variables */
+	var totalFileCount, fileUploadCount, fileSize;
+
+	/* start uploading files */
+	function startUploading() {
+		var files = document.getElementById('files').files;
+		if(files.length==0){
+			alert("Please choose at least one file and try.");
+			return;
+		}
+		fileUploadCount=0;
+		prepareProgressBarUI(files);
+		
+		uploadFile();
+	}
+	
+	/* This method will be called to prepare progress-bar UI */
+	function prepareProgressBarUI(files){
+		totalFileCount = files.length;
+		var $tbody=$("#progress-bar-container").find("tbody");
+		$("#upload-header-text").html("1 of "+totalFileCount+" file(s) is uploading");
+		for(var i=0;i<totalFileCount;i++){
+			var $tr=$("#progress-bar-container").find("tr");
+			var fsize=parseFileSize(files[i].size);
+			var fname=files[i].name;
+			var bar='<tr id="progress-bar-'+$tr.length+'"><td style="width:75%"><div class="filename">'+fname+'</div>'
+			+'<div class="progress"><div class="progress-bar progress-bar-striped active" style="width:0%"></div></div></td>'
+			+'<td  style="width:25%"><span class="size-loaded"></span> '+fsize+' <span class="percent-loaded"></span></td></tr>';
+			$tbody.append(bar);
+		}
+		$("#upload-status-container").show();
+	}
+	
+	/* parse the file size in kb/mb/gb */
+	function parseFileSize(size){
+		var precision=1;
+		var factor = Math.pow(10, precision);
+		size = Math.round(size / 1024); //size in KB
+	
+		if(size < 1000){
+			return size+" KB";
+		}else{
+			size = Number.parseFloat(size / 1024); //size in MB
+			if(size < 1000){
+				return (Math.round(size * factor) / factor) + " MB";
+			}else{
+				size = Number.parseFloat(size / 1024); //size in GB
+				return (Math.round(size * factor) / factor) + " GB";
+			}
+		}
+		return 0;
+	}
+
+	/* one by one file will be uploaded to the server by ajax call*/
+	function uploadFile() {
+		var file = document.getElementById('files').files[fileUploadCount];
+		fileSize = file.size;
+		var xhr = new XMLHttpRequest();
+		var fd = new FormData();
+		fd.append("fileList", file);
+		xhr.upload.addEventListener("progress", onUploadProgress, false);
+		xhr.addEventListener("load", onUploadComplete, false);
+		xhr.addEventListener("error", onUploadError, false);
+		xhr.open("POST", "upload");
+		xhr.send(fd);
+
+		//xhr.onload = function () {
+		//if (this.status === 200) {
+		//console.log(this.status);
+		//	}
+		//}
+	}
+
+
+	/* This function will continueously update the progress bar */
+	function onUploadProgress(e) {
+		if (e.lengthComputable) {
+			//파일선택시 progress 순차 실행
+			var $tr=$("#progress-bar-container").find("tr");
+			var trStart = $tr.length-totalFileCount;
+			var total ;
+			//최초1회 업로드 
+			if(trStart == 0){
+				if(0<=fileUploadCount){
+					total++;
+					total = fileUploadCount;
+				}
+			}else{
+			//추가 업로드 
+				if(0<=fileUploadCount){
+					total++;
+					total =$tr.length-totalFileCount+fileUploadCount;
+				}
+			}
+			
+			var percentComplete = parseInt((e.loaded) * 100	/ fileSize);
+			
+			var pbar = $('#progress-bar-'+total);
+			var bar=pbar.find(".progress-bar");
+			var sLoaded=pbar.find(".size-loaded");
+			var pLoaded=pbar.find(".percent-loaded");
+			bar.css("width",percentComplete + '%');
+			sLoaded.html(parseFileSize(e.loaded)+ " / ");
+			pLoaded.html("("+percentComplete+ "%)");
+		} else {
+			alert('unable to compute');
+		}
+	}
+
+	/* This function will call when upload is completed */
+	function onUploadComplete(e, error) {
+		var pbar = $('#progress-bar-'+fileUploadCount);
+		if(error){
+			pbar.find(".progress-bar").removeClass("active").addClass("progress-bar-danger");
+		}else{
+			pbar.find(".progress-bar").removeClass("active");
+			pbar.find(".size-loaded").html('<i class="fa fa-check text-success"></i> ');
+		}
+		fileUploadCount++;
+		
+		if (fileUploadCount < totalFileCount) {
+			//ajax call if more files are there 
+			uploadFile();
+			$("#upload-header-text").html((fileUploadCount+1)+" of "+totalFileCount+" file(s) is uploading");
+		} else {
+			$("#upload-header-text").html("File(s) uploaded successfully!");
+			//location.href="list";
+		}
+	}
+
+	/* This function will call when an error come while uploading */
+	function onUploadError(e) {
+		console.error("Something went wrong!");startUploading()
+		onUploadComplete(e,true);
+	}
+	
+	function showHide(ele){
+		if($(ele).hasClass('fa-window-minimize')){
+			$(ele).removeClass('fa-window-minimize').addClass('fa-window-restore').attr("title","restore");
+			$("#progress-bar-container").slideUp();
+		}else{
+			$(ele).addClass('fa-window-minimize').removeClass('fa-window-restore').attr("title","minimize");
+			$("#progress-bar-container").slideDown();
+		}
+	}
+	
+	
+	
+</script>
+</html>
